@@ -586,6 +586,71 @@
       color: #666;
       margin-top: 0.5rem;
     }
+
+    /* Dark mode styles */
+    body.dark-mode {
+      background-color: #1f2937;
+      color: #f3f4f6;
+    }
+    
+    body.dark-mode .content {
+      background: rgba(31, 41, 55, 0.8);
+      border-color: rgba(75, 85, 99, 0.3);
+    }
+    
+    body.dark-mode .search-bar {
+      background-color: rgba(55, 65, 81, 0.9);
+      color: #f3f4f6;
+    }
+    
+    body.dark-mode .search-bar:focus {
+      background-color: rgba(75, 85, 99, 0.9);
+    }
+    
+    body.dark-mode .video-info {
+      background: rgba(31, 41, 55, 0.8);
+    }
+    
+    body.dark-mode .download-option {
+      background: rgba(55, 65, 81, 0.9);
+    }
+    
+    body.dark-mode .option-details {
+      color: #d1d5db;
+    }
+    
+    body.dark-mode .video-meta {
+      color: #d1d5db;
+    }
+    
+    body.dark-mode .loading-text {
+      color: #d1d5db;
+    }
+    
+    body.dark-mode .theme-icon {
+      color: #f3f4f6;
+    }
+    
+    body.dark-mode .theme-toggle {
+      background: rgba(75, 85, 99, 0.3);
+    }
+    
+    body.dark-mode .theme-toggle:hover {
+      background: rgba(75, 85, 99, 0.5);
+    }
+    
+    body.dark-mode .multi-url-input textarea {
+      background-color: rgba(55, 65, 81, 0.9);
+      color: #f3f4f6;
+    }
+    
+    body.dark-mode .multi-url-input .info-text {
+      color: #d1d5db;
+    }
+    
+    body.dark-mode .triangle {
+      border-bottom-color: rgba(255, 255, 255, 0.05);
+    }
   </style>
 </head>
 <body>
@@ -663,7 +728,7 @@
 
       <div class="api-status">
         <span class="status-indicator"></span>
-        <span>Using pytube</span>
+        <span>Using yt-dlp</span>
       </div>
 
       <!-- Loading Indicator -->
@@ -687,7 +752,7 @@
           </div>
 
           <!-- Video Preview -->
-          <div id="videoPreview" class="video-preview">
+          <div class="video-preview" id="videoPreview">
             <div class="preview-container" id="previewContainer"></div>
           </div>
 
@@ -761,7 +826,7 @@
         multiUrlInput.style.display = isVisible ? 'none' : 'block';
         multiUrlToggle.querySelector('span').textContent = isVisible ? 'Multiple URLs' : 'Single URL';
         multiUrlToggle.querySelector('svg').innerHTML = isVisible 
-          ? '<path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>'
+          ? '<path d="M8 4a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>'
           : '<path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>';
       });
 
@@ -783,6 +848,7 @@
 
       // Function to format file size
       function formatFileSize(sizeInMB) {
+        if (!sizeInMB) return '';
         if (sizeInMB < 1) {
           return `${Math.round(sizeInMB * 1000)} KB`;
         }
@@ -791,8 +857,9 @@
 
       // Function to format duration
       function formatDuration(seconds) {
+        if (!seconds) return '0:00';
         const minutes = Math.floor(seconds / 60);
-        const remainingSeconds = seconds % 60;
+        const remainingSeconds = Math.floor(seconds % 60);
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
       }
 
@@ -824,7 +891,7 @@
       }
 
       // Function to handle video download
-      function downloadVideo(url, itag) {
+      function downloadVideo(url, format_id) {
         loadingElement.style.display = 'block';
         hideError();
         downloadProgressElement.style.display = 'block';
@@ -833,8 +900,8 @@
         const formData = new FormData();
         formData.append('url', url);
         
-        if (itag) {
-          formData.append('itag', itag);
+        if (format_id) {
+          formData.append('format_id', format_id);
         }
 
         // Create a fetch request with progress tracking
@@ -969,7 +1036,7 @@
                 `;
                 
                 optionElement.querySelector('.download-btn').addEventListener('click', function() {
-                  downloadVideo(url, stream.itag);
+                  downloadVideo(url, stream.format_id);
                 });
                 
                 downloadOptionsElement.appendChild(optionElement);
@@ -1017,75 +1084,6 @@
           videoUrlInput.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         }
       });
-
-      // Add dark mode styles
-      const darkModeStyles = document.createElement('style');
-      darkModeStyles.textContent = `
-        body.dark-mode {
-          background-color: #1f2937;
-          color: #f3f4f6;
-        }
-        
-        body.dark-mode .content {
-          background: rgba(31, 41, 55, 0.8);
-          border-color: rgba(75, 85, 99, 0.3);
-        }
-        
-        body.dark-mode .search-bar {
-          background-color: rgba(55, 65, 81, 0.9);
-          color: #f3f4f6;
-        }
-        
-        body.dark-mode .search-bar:focus {
-          background-color: rgba(75, 85, 99, 0.9);
-        }
-        
-        body.dark-mode .video-info {
-          background: rgba(31, 41, 55, 0.8);
-        }
-        
-        body.dark-mode .download-option {
-          background: rgba(55, 65, 81, 0.9);
-        }
-        
-        body.dark-mode .option-details {
-          color: #d1d5db;
-        }
-        
-        body.dark-mode .video-meta {
-          color: #d1d5db;
-        }
-        
-        body.dark-mode .loading-text {
-          color: #d1d5db;
-        }
-        
-        body.dark-mode .theme-icon {
-          color: #f3f4f6;
-        }
-        
-        body.dark-mode .theme-toggle {
-          background: rgba(75, 85, 99, 0.3);
-        }
-        
-        body.dark-mode .theme-toggle:hover {
-          background: rgba(75, 85, 99, 0.5);
-        }
-        
-        body.dark-mode .multi-url-input textarea {
-          background-color: rgba(55, 65, 81, 0.9);
-          color: #f3f4f6;
-        }
-        
-        body.dark-mode .multi-url-input .info-text {
-          color: #d1d5db;
-        }
-        
-        body.dark-mode .triangle {
-          border-bottom-color: rgba(255, 255, 255, 0.05);
-        }
-      `;
-      document.head.appendChild(darkModeStyles);
     });
   </script>
 </body>
