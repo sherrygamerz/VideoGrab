@@ -1,15 +1,15 @@
 services:
-  - type: web
-    name: videograb
-    env: python
-    buildCommand: |
-      # Install dependencies
-      pip install -r requirements.txt
-      # Install yt-dlp
-      pip install yt-dlp
-      # Create necessary directories
-      mkdir -p tmp
-    startCommand: gunicorn app:app
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.9.0
+- type: web
+  name: fileconverter
+  env: python
+  buildCommand: |
+    # Install dependencies
+    pip install -r requirements.txt
+    # Install FFmpeg
+    apt-get update && apt-get install -y ffmpeg
+    # Create necessary directories
+    mkdir -p tmp
+  startCommand: gunicorn app:app
+  envVars:
+    - key: PYTHON_VERSION
+      value: 3.9.0
