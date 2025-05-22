@@ -587,6 +587,16 @@
       margin-top: 0.5rem;
     }
 
+    /* Warning message style */
+    .warning-message {
+      background-color: #fff3cd;
+      color: #856404;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-top: 1rem;
+      display: none;
+    }
+
     /* Dark mode styles */
     body.dark-mode {
       background-color: #1f2937;
@@ -650,6 +660,11 @@
     
     body.dark-mode .triangle {
       border-bottom-color: rgba(255, 255, 255, 0.05);
+    }
+    
+    body.dark-mode .warning-message {
+      background-color: rgba(255, 243, 205, 0.2);
+      color: #ffd166;
     }
   </style>
 </head>
@@ -767,6 +782,9 @@
           <div class="download-progress" id="downloadProgress">
             <div class="progress-bar" id="progressBar"></div>
           </div>
+
+          <!-- Warning Message -->
+          <div id="warningMessage" class="warning-message"></div>
         </div>
       </div>
     </div>
@@ -794,6 +812,7 @@
       const themeToggleButton = document.getElementById('themeToggle');
       const multiUrlToggle = document.getElementById('multiUrlToggle');
       const multiUrlInput = document.getElementById('multiUrlInput');
+      const warningMessageElement = document.getElementById('warningMessage');
 
       // Check for saved theme preference
       const savedTheme = localStorage.getItem('theme');
@@ -930,6 +949,11 @@
               document.body.appendChild(downloadLink);
               downloadLink.click();
               document.body.removeChild(downloadLink);
+              
+              // Show fallback message if applicable
+              if (data.is_fallback) {
+                showWarning(data.fallback_message || 'Only thumbnail could be downloaded due to restrictions.');
+              }
             } else {
               showError(data.error || 'Failed to download video');
             }
@@ -945,6 +969,20 @@
         };
         
         xhr.send(formData);
+      }
+
+      // Function to show warning messages
+      function showWarning(message) {
+        if (!warningMessageElement) {
+          // Create warning element if it doesn't exist
+          const warningElement = document.createElement('div');
+          warningElement.id = 'warningMessage';
+          warningElement.className = 'warning-message';
+          document.querySelector('.video-info').appendChild(warningElement);
+        }
+        
+        warningMessageElement.textContent = message;
+        warningMessageElement.style.display = 'block';
       }
 
       // Function to handle search button click
