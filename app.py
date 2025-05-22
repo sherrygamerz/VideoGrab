@@ -7,7 +7,9 @@ import requests
 import time
 import tempfile
 import shutil
+import subprocess
 from urllib.parse import urlparse, parse_qs
+import yt_dlp
 
 app = Flask(__name__)
 
@@ -54,92 +56,67 @@ def detect_platform(url):
     else:
         return 'unknown'
 
-# Function to get YouTube video info using yt-dlp (more reliable than pytube)
+# Function to get YouTube video info using yt-dlp
 def get_youtube_info(url):
     try:
-        # First try with pytube
-        from pytube import YouTube
-        yt = YouTube(url)
+        # Configure yt-dlp options
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'format': 'best',
+            'extract_flat': True,
+        }
         
-        # Get available streams
+        # Get video info
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+        # Extract available formats
+        formats = info.get('formats', [])
+        
+        # Filter for video formats with both video and audio (progressive)
+        progressive_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']
+        
+        # Sort by resolution
+        progressive_formats.sort(key=lambda x: x.get('height', 0), reverse=True)
+        
+        # Create streams list
         streams = []
-        for stream in yt.streams.filter(progressive=True).order_by('resolution').desc():
-            # Calculate approximate size in MB
-            size_mb = stream.filesize / (1024 * 1024)
+        for fmt in progressive_formats:
+            # Skip formats without resolution info
+            if not fmt.get('height'):
+                continue
+                
+            # Calculate approximate size in MB if filesize is available
+            size_mb = None
+            if fmt.get('filesize'):
+                size_mb = round(fmt.get('filesize') / (1024 * 1024), 2)
             
             streams.append({
-                'itag': stream.itag,
-                'resolution': stream.resolution,
-                'mime_type': stream.mime_type,
-                'fps': stream.fps,
-                'size_mb': round(size_mb, 2)
+                'format_id': fmt.get('format_id'),
+                'resolution': f"{fmt.get('height')}p",
+                'mime_type': fmt.get('ext', 'mp4'),
+                'fps': fmt.get('fps'),
+                'size_mb': size_mb,
+                'url': fmt.get('url')
             })
         
         # Get video details
         video_info = {
-            'id': extract_youtube_id(url),
-            'title': yt.title,
-            'thumbnail': yt.thumbnail_url,
-            'author': yt.author,
-            'length': yt.length,
+            'id': info.get('id', extract_youtube_id(url)),
+            'title': info.get('title', 'YouTube Video'),
+            'thumbnail': info.get('thumbnail', f"https://img.youtube.com/vi/{extract_youtube_id(url)}/maxresdefault.jpg"),
+            'author': info.get('uploader', 'YouTube Creator'),
+            'length': info.get('duration', 0),
             'streams': streams
         }
         
         return video_info
         
     except Exception as e:
-        print(f"Pytube error: {e}")
-        
-        # Fallback to direct YouTube API approach
-        try:
-            video_id = extract_youtube_id(url)
-            if not video_id:
-                raise ValueError("Could not extract YouTube video ID")
-            
-            # Get basic video info from oEmbed API (public, no key needed)
-            oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-            response = requests.get(oembed_url)
-            if response.status_code != 200:
-                raise Exception(f"Failed to get video info: HTTP {response.status_code}")
-            
-            oembed_data = response.json()
-            
-            # Get thumbnail
-            thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-            thumbnail_check = requests.head(thumbnail_url)
-            if thumbnail_check.status_code != 200:
-                thumbnail_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-            
-            # Create a simplified stream list with common resolutions
-            streams = [
-                {
-                    'itag': '22',
-                    'resolution': '720p',
-                    'mime_type': 'video/mp4',
-                    'fps': 30
-                },
-                {
-                    'itag': '18',
-                    'resolution': '360p',
-                    'mime_type': 'video/mp4',
-                    'fps': 30
-                }
-            ]
-            
-            video_info = {
-                'id': video_id,
-                'title': oembed_data.get('title', 'YouTube Video'),
-                'thumbnail': thumbnail_url,
-                'author': oembed_data.get('author_name', 'YouTube Creator'),
-                'length': 0,  # We don't have this info from oembed
-                'streams': streams
-            }
-            
-            return video_info
-            
-        except Exception as fallback_error:
-            print(f"Fallback error: {fallback_error}")
-            raise Exception(f"Failed to get YouTube video info: {str(e)}. Fallback also failed: {str(fallback_error)}")
+        print(f"yt-dlp error: {e}")
+        raise Exception(f"Failed to get YouTube video info: {str(e)}")
 
 @app.route('/')
 def index():
@@ -190,7 +167,7 @@ def get_video_info():
 @app.route('/api/download', methods=['POST'])
 def download_video():
     url = request.form.get('url')
-    itag = request.form.get('itag')  # For YouTube specific quality
+    format_id = request.form.get('format_id')  # For YouTube specific quality
     
     if not url:
         return jsonify({'success': False, 'error': 'No URL provided'})
@@ -199,40 +176,53 @@ def download_video():
     
     if platform == 'youtube':
         try:
-            # Try with pytube first
-            try:
-                from pytube import YouTube
-                yt = YouTube(url)
+            # Generate a unique filename base
+            video_id = extract_youtube_id(url)
+            filename_base = f"youtube_{video_id}_{uuid.uuid4().hex[:8]}"
+            output_path = os.path.join(TEMP_DIR, filename_base)
+            
+            # Configure yt-dlp options
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'outtmpl': f"{output_path}.%(ext)s",
+            }
+            
+            # Add format if specified
+            if format_id:
+                ydl_opts['format'] = format_id
+            else:
+                # Default to best quality with video and audio
+                ydl_opts['format'] = 'best[height<=1080]'
+            
+            # Download the video
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                # Get the filename that was actually used
+                filename = ydl.prepare_filename(info)
                 
-                # Select stream based on itag if provided, otherwise highest resolution
-                if itag and itag.isdigit():
-                    stream = yt.streams.get_by_itag(int(itag))
+            # Check if file exists
+            if not os.path.exists(filename):
+                # Try with extension
+                for ext in ['mp4', 'webm', 'mkv']:
+                    test_filename = f"{output_path}.{ext}"
+                    if os.path.exists(test_filename):
+                        filename = test_filename
+                        break
                 else:
-                    stream = yt.streams.filter(progressive=True).order_by('resolution').desc().first()
-                
-                if not stream:
-                    raise Exception("No suitable stream found")
-                
-                # Generate a unique filename
-                filename = f"{yt.title.replace(' ', '_')[:50]}_{uuid.uuid4().hex[:8]}.{stream.subtype}"
-                safe_filename = re.sub(r'[^\w\-_\.]', '_', filename)
-                output_path = os.path.join(TEMP_DIR, safe_filename)
-                
-                # Download the video
-                stream.download(output_path=TEMP_DIR, filename=safe_filename)
-                
-                # Return the download URL
-                download_url = url_for('serve_file', filename=safe_filename, _external=True)
-                
-                return jsonify({
-                    'success': True,
-                    'download_url': download_url,
-                    'filename': safe_filename
-                })
-                
-            except Exception as pytube_error:
-                print(f"Pytube download error: {pytube_error}")
-                raise Exception(f"Failed to download with pytube: {str(pytube_error)}")
+                    raise Exception("Downloaded file not found")
+            
+            # Get just the filename without the path
+            base_filename = os.path.basename(filename)
+            
+            # Return the download URL
+            download_url = url_for('serve_file', filename=base_filename, _external=True)
+            
+            return jsonify({
+                'success': True,
+                'download_url': download_url,
+                'filename': base_filename
+            })
                 
         except Exception as e:
             return jsonify({'success': False, 'error': f'Failed to download YouTube video: {str(e)}'})
