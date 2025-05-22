@@ -3,7 +3,7 @@ services:
     name: videograb
     env: python
     buildCommand: |
-      # Install dependencies
+      # Install dependencies with specific versions
       pip install -r requirements.txt
       # Create necessary directories
       mkdir -p tmp
