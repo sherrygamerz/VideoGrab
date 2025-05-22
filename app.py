@@ -95,21 +95,21 @@ def download_youtube(url):
         # For simplicity, we'll provide fixed quality options that are commonly available
         streams = [
             {
-                'itag': '22',
+                'itag': 'high',
                 'resolution': '720p',
                 'mime_type': 'video/mp4',
                 'fps': 30,
                 'size_mb': 15.0  # Estimated size
             },
             {
-                'itag': '18',
+                'itag': 'medium',
                 'resolution': '360p',
                 'mime_type': 'video/mp4',
                 'fps': 30,
                 'size_mb': 8.0  # Estimated size
             },
             {
-                'itag': '17',
+                'itag': 'low',
                 'resolution': '144p',
                 'mime_type': 'video/mp4',
                 'fps': 30,
@@ -357,12 +357,6 @@ def download_video():
         file_path = os.path.join(TEMP_DIR, filename)
         
         if platform == 'youtube':
-            if not itag:
-                return jsonify({
-                    'success': False,
-                    'error': 'No itag provided for YouTube video'
-                })
-            
             video_id = extract_youtube_id(url)
             if not video_id:
                 return jsonify({
@@ -370,44 +364,28 @@ def download_video():
                     'error': 'Could not extract YouTube video ID'
                 })
             
-            # Use youtube-dl or yt-dlp command line as a fallback
-            # This is more reliable than pytube
-            try:
-                # Try to use yt-dlp if available (more up-to-date)
-                import subprocess
-                cmd = [
-                    'yt-dlp',
-                    '-f', itag,
-                    '-o', file_path,
-                    f'https://www.youtube.com/watch?v={video_id}'
-                ]
+            # For YouTube, we'll use a different approach
+            # Instead of trying to download directly (which is increasingly difficult),
+            # we'll redirect to a reliable third-party service
+            
+            # Create a YouTube download service URL
+            if itag == 'high':
+                quality = '720'
+            elif itag == 'medium':
+                quality = '360'
+            else:
+                quality = '144'
                 
-                # Try to execute the command
-                subprocess.run(cmd, check=True, capture_output=True)
-                
-                # If successful, return the download URL
-                return jsonify({
-                    'success': True,
-                    'download_url': url_for('serve_file', filename=filename),
-                    'filename': f"youtube_{video_id}.mp4"
-                })
-            except (subprocess.SubprocessError, FileNotFoundError):
-                # If yt-dlp fails or is not installed, try direct download
-                # For simplicity, we'll use a direct approach
-                if itag == '22':  # 720p
-                    direct_url = f"https://www.youtube.com/watch?v={video_id}"
-                elif itag == '18':  # 360p
-                    direct_url = f"https://www.youtube.com/watch?v={video_id}"
-                else:  # 144p or other
-                    direct_url = f"https://www.youtube.com/watch?v={video_id}"
-                
-                # Redirect to YouTube as a fallback
-                return jsonify({
-                    'success': False,
-                    'error': 'Direct download failed. Please try using a YouTube downloader extension or service.',
-                    'redirect_url': direct_url
-                })
-        
+            # Use y2mate or similar service (this is just an example)
+            download_service_url = f"https://www.y2mate.com/youtube/{video_id}"
+            
+            return jsonify({
+                'success': True,
+                'redirect': True,
+                'service_url': download_service_url,
+                'message': 'Redirecting to download service...'
+            })
+            
         elif platform in ['facebook', 'instagram']:
             if not stream_url:
                 return jsonify({
