@@ -288,7 +288,7 @@
     /* Responsive styles */
     @media (max-width: 768px) {
       .content {
-        padding: 1rem;
+        padding: 2rem;
       }
 
       h1 {
@@ -308,6 +308,10 @@
       
       .search-bar {
         padding: 1rem;
+      }
+      
+      .content {
+        padding: 1.5rem;
       }
     }
 
@@ -333,6 +337,12 @@
       display: flex;
       gap: 1.5rem;
       align-items: flex-start;
+    }
+
+    @media (max-width: 600px) {
+      .video-header {
+        flex-direction: column;
+      }
     }
 
     .video-thumbnail {
@@ -510,6 +520,72 @@
       width: 0%;
       transition: width 0.3s ease;
     }
+
+    /* Dark mode toggle */
+    .theme-toggle {
+      position: absolute;
+      top: 2rem;
+      right: 2rem;
+      background: rgba(255, 255, 255, 0.2);
+      border: none;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .theme-toggle:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .theme-icon {
+      width: 20px;
+      height: 20px;
+      color: #333;
+    }
+
+    /* Multi-URL input */
+    .multi-url-toggle {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #3b82f6;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .multi-url-toggle:hover {
+      text-decoration: underline;
+    }
+
+    .multi-url-input {
+      display: none;
+      width: 100%;
+      margin-top: 1rem;
+    }
+
+    .multi-url-input textarea {
+      width: 100%;
+      height: 100px;
+      padding: 1rem;
+      border-radius: 8px;
+      border: none;
+      background-color: rgba(255, 255, 255, 0.9);
+      resize: vertical;
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    .multi-url-input .info-text {
+      font-size: 0.8rem;
+      color: #666;
+      margin-top: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -529,6 +605,13 @@
 
   <!-- App Name -->
   <div class="app-name">VideoGrab</div>
+
+  <!-- Theme Toggle -->
+  <button class="theme-toggle" id="themeToggle">
+    <svg class="theme-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+    </svg>
+  </button>
 
   <!-- Main Content -->
   <div class="container">
@@ -566,9 +649,21 @@
         </button>
       </div>
 
+      <div class="multi-url-toggle" id="multiUrlToggle">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+          <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+        </svg>
+        <span>Multiple URLs</span>
+      </div>
+
+      <div class="multi-url-input" id="multiUrlInput">
+        <textarea placeholder="Enter multiple URLs, one per line..."></textarea>
+        <div class="info-text">Enter one URL per line. Maximum 5 URLs at once.</div>
+      </div>
+
       <div class="api-status">
         <span class="status-indicator"></span>
-        <span>Using RapidAPI</span>
+        <span>Using pytube</span>
       </div>
 
       <!-- Loading Indicator -->
@@ -631,6 +726,47 @@
       const previewContainerElement = document.getElementById('previewContainer');
       const downloadProgressElement = document.getElementById('downloadProgress');
       const progressBarElement = document.getElementById('progressBar');
+      const themeToggleButton = document.getElementById('themeToggle');
+      const multiUrlToggle = document.getElementById('multiUrlToggle');
+      const multiUrlInput = document.getElementById('multiUrlInput');
+
+      // Check for saved theme preference
+      const savedTheme = localStorage.getItem('theme');
+      if (savedTheme === 'dark') {
+        document.body.classList.add('dark-mode');
+        updateThemeIcon(true);
+      }
+
+      // Function to toggle dark mode
+      function toggleDarkMode() {
+        const isDarkMode = document.body.classList.toggle('dark-mode');
+        updateThemeIcon(isDarkMode);
+        localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+      }
+
+      // Function to update theme icon
+      function updateThemeIcon(isDarkMode) {
+        themeToggleButton.innerHTML = isDarkMode 
+          ? `<svg class="theme-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>`
+          : `<svg class="theme-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>`;
+      }
+
+      // Toggle multiple URL input
+      multiUrlToggle.addEventListener('click', function() {
+        const isVisible = multiUrlInput.style.display === 'block';
+        multiUrlInput.style.display = isVisible ? 'none' : 'block';
+        multiUrlToggle.querySelector('span').textContent = isVisible ? 'Multiple URLs' : 'Single URL';
+        multiUrlToggle.querySelector('svg').innerHTML = isVisible 
+          ? '<path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>'
+          : '<path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>';
+      });
+
+      // Add theme toggle event listener
+      themeToggleButton.addEventListener('click', toggleDarkMode);
 
       // Function to show error message
       function showError(message) {
@@ -688,7 +824,7 @@
       }
 
       // Function to handle video download
-      function downloadVideo(url, streamUrl) {
+      function downloadVideo(url, itag) {
         loadingElement.style.display = 'block';
         hideError();
         downloadProgressElement.style.display = 'block';
@@ -697,8 +833,8 @@
         const formData = new FormData();
         formData.append('url', url);
         
-        if (streamUrl) {
-          formData.append('stream_url', streamUrl);
+        if (itag) {
+          formData.append('itag', itag);
         }
 
         // Create a fetch request with progress tracking
@@ -722,7 +858,7 @@
             if (data.success) {
               // For all platforms, download directly
               const downloadLink = document.createElement('a');
-              downloadLink.href = data.download_url + '?name=' + encodeURIComponent(data.filename);
+              downloadLink.href = data.download_url;
               downloadLink.download = data.filename;
               document.body.appendChild(downloadLink);
               downloadLink.click();
@@ -819,7 +955,7 @@
                 optionElement.className = 'download-option';
                 
                 optionElement.innerHTML = `
-                  <div class="option-quality">${stream.resolution || stream.quality || 'Standard'}</div>
+                  <div class="option-quality">${stream.resolution || 'Standard'}</div>
                   <div class="option-details">
                     ${stream.mime_type || 'video/mp4'} ${stream.fps ? ' | ' + stream.fps + 'fps' : ''} ${stream.size_mb ? ' | ' + formatFileSize(stream.size_mb) : ''}
                   </div>
@@ -833,7 +969,7 @@
                 `;
                 
                 optionElement.querySelector('.download-btn').addEventListener('click', function() {
-                  downloadVideo(url, stream.url);
+                  downloadVideo(url, stream.itag);
                 });
                 
                 downloadOptionsElement.appendChild(optionElement);
@@ -881,6 +1017,75 @@
           videoUrlInput.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         }
       });
+
+      // Add dark mode styles
+      const darkModeStyles = document.createElement('style');
+      darkModeStyles.textContent = `
+        body.dark-mode {
+          background-color: #1f2937;
+          color: #f3f4f6;
+        }
+        
+        body.dark-mode .content {
+          background: rgba(31, 41, 55, 0.8);
+          border-color: rgba(75, 85, 99, 0.3);
+        }
+        
+        body.dark-mode .search-bar {
+          background-color: rgba(55, 65, 81, 0.9);
+          color: #f3f4f6;
+        }
+        
+        body.dark-mode .search-bar:focus {
+          background-color: rgba(75, 85, 99, 0.9);
+        }
+        
+        body.dark-mode .video-info {
+          background: rgba(31, 41, 55, 0.8);
+        }
+        
+        body.dark-mode .download-option {
+          background: rgba(55, 65, 81, 0.9);
+        }
+        
+        body.dark-mode .option-details {
+          color: #d1d5db;
+        }
+        
+        body.dark-mode .video-meta {
+          color: #d1d5db;
+        }
+        
+        body.dark-mode .loading-text {
+          color: #d1d5db;
+        }
+        
+        body.dark-mode .theme-icon {
+          color: #f3f4f6;
+        }
+        
+        body.dark-mode .theme-toggle {
+          background: rgba(75, 85, 99, 0.3);
+        }
+        
+        body.dark-mode .theme-toggle:hover {
+          background: rgba(75, 85, 99, 0.5);
+        }
+        
+        body.dark-mode .multi-url-input textarea {
+          background-color: rgba(55, 65, 81, 0.9);
+          color: #f3f4f6;
+        }
+        
+        body.dark-mode .multi-url-input .info-text {
+          color: #d1d5db;
+        }
+        
+        body.dark-mode .triangle {
+          border-bottom-color: rgba(255, 255, 255, 0.05);
+        }
+      `;
+      document.head.appendChild(darkModeStyles);
     });
   </script>
 </body>
