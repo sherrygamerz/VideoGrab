@@ -9,7 +9,6 @@ import tempfile
 import shutil
 import subprocess
 from urllib.parse import urlparse, parse_qs
-import yt_dlp
 
 app = Flask(__name__)
 
@@ -58,84 +57,91 @@ def detect_platform(url):
     else:
         return 'unknown'
 
-# Function to get YouTube video info using alternative methods to avoid bot detection
+# Function to get YouTube video info using yt-dlp subprocess
 def get_youtube_info(url):
     try:
         video_id = extract_youtube_id(url)
         if not video_id:
             raise ValueError("Could not extract YouTube video ID")
         
-        # Method 1: Try using yt-dlp with anti-bot detection measures
+        # Create a unique filename for the JSON output
+        json_file = os.path.join(TEMP_DIR, f"info_{video_id}_{uuid.uuid4().hex[:8]}.json")
+        
+        # Run yt-dlp to get video info
+        cmd = [
+            'yt-dlp',
+            '--dump-json',
+            '--no-playlist',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            '--referer', 'https://www.youtube.com/',
+            '--no-check-certificate',
+            '--geo-bypass-country', 'US',
+            url,
+            '-o', json_file
+        ]
+        
+        # Add cookies file if it exists
+        cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
+        if os.path.exists(cookies_file):
+            cmd.extend(['--cookies', cookies_file])
+        
+        # Run the command
+        process = subprocess.run(cmd, capture_output=True, text=True)
+        
+        # Check if the command was successful
+        if process.returncode != 0:
+            print(f"yt-dlp error: {process.stderr}")
+            raise Exception(f"yt-dlp error: {process.stderr}")
+        
+        # Parse the JSON output
+        info = json.loads(process.stdout)
+        
+        # Extract available formats
+        formats = info.get('formats', [])
+        
+        # Filter for video formats with both video and audio (progressive)
+        progressive_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']
+        
+        # Sort by resolution
+        progressive_formats.sort(key=lambda x: x.get('height', 0), reverse=True)
+        
+        # Create streams list
+        streams = []
+        for fmt in progressive_formats:
+            # Skip formats without resolution info
+            if not fmt.get('height'):
+                continue
+                
+            # Calculate approximate size in MB if filesize is available
+            size_mb = None
+            if fmt.get('filesize'):
+                size_mb = round(fmt.get('filesize') / (1024 * 1024), 2)
+            
+            streams.append({
+                'format_id': fmt.get('format_id'),
+                'resolution': f"{fmt.get('height')}p",
+                'mime_type': fmt.get('ext', 'mp4'),
+                'fps': fmt.get('fps'),
+                'size_mb': size_mb
+            })
+        
+        # Get video details
+        video_info = {
+            'id': info.get('id', video_id),
+            'title': info.get('title', 'YouTube Video'),
+            'thumbnail': info.get('thumbnail', f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"),
+            'author': info.get('uploader', 'YouTube Creator'),
+            'length': info.get('duration', 0),
+            'streams': streams
+        }
+        
+        return video_info
+        
+    except Exception as e:
+        print(f"YouTube info error: {e}")
+        
+        # Fallback to basic info
         try:
-            # Configure yt-dlp options with anti-bot detection measures
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'skip_download': True,
-                'format': 'best',
-                'extract_flat': True,
-                # Use a browser-like user agent
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                # Add referer
-                'referer': 'https://www.youtube.com/',
-                # Add sleep between requests
-                'sleep_interval': 1,
-                # Disable geo-bypass to avoid triggering bot detection
-                'geo_bypass': False,
-                # Use cookies if available
-                'cookiefile': os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt') if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')) else None,
-            }
-            
-            # Get video info
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-            # Extract available formats
-            formats = info.get('formats', [])
-            
-            # Filter for video formats with both video and audio (progressive)
-            progressive_formats = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']
-            
-            # Sort by resolution
-            progressive_formats.sort(key=lambda x: x.get('height', 0), reverse=True)
-            
-            # Create streams list
-            streams = []
-            for fmt in progressive_formats:
-                # Skip formats without resolution info
-                if not fmt.get('height'):
-                    continue
-                    
-                # Calculate approximate size in MB if filesize is available
-                size_mb = None
-                if fmt.get('filesize'):
-                    size_mb = round(fmt.get('filesize') / (1024 * 1024), 2)
-                
-                streams.append({
-                    'format_id': fmt.get('format_id'),
-                    'resolution': f"{fmt.get('height')}p",
-                    'mime_type': fmt.get('ext', 'mp4'),
-                    'fps': fmt.get('fps'),
-                    'size_mb': size_mb,
-                    'url': fmt.get('url')
-                })
-            
-            # Get video details
-            video_info = {
-                'id': info.get('id', video_id),
-                'title': info.get('title', 'YouTube Video'),
-                'thumbnail': info.get('thumbnail', f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"),
-                'author': info.get('uploader', 'YouTube Creator'),
-                'length': info.get('duration', 0),
-                'streams': streams
-            }
-            
-            return video_info
-            
-        except Exception as ydl_error:
-            print(f"yt-dlp error: {ydl_error}")
-            
-            # Method 2: Fallback to direct API approach
             # Get basic video info from oEmbed API (public, no key needed)
             oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
             response = requests.get(oembed_url, headers={
@@ -155,7 +161,6 @@ def get_youtube_info(url):
                 thumbnail_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
             
             # Create a simplified stream list with common resolutions
-            # These are just placeholders - the actual download will use youtube-dl
             streams = [
                 {
                     'format_id': 'best',
@@ -182,9 +187,9 @@ def get_youtube_info(url):
             
             return video_info
             
-    except Exception as e:
-        print(f"YouTube info error: {e}")
-        raise Exception(f"Failed to get YouTube video info: {str(e)}")
+        except Exception as fallback_error:
+            print(f"Fallback error: {fallback_error}")
+            raise Exception(f"Failed to get YouTube video info: {str(e)}. Fallback also failed: {str(fallback_error)}")
 
 @app.route('/')
 def index():
@@ -250,66 +255,67 @@ def download_video():
             filename_base = f"youtube_{video_id}_{uuid.uuid4().hex[:8]}"
             output_path = os.path.join(TEMP_DIR, filename_base)
             
-            # Configure yt-dlp options with anti-bot detection measures
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'outtmpl': f"{output_path}.%(ext)s",
-                # Use a browser-like user agent
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                # Add referer
-                'referer': 'https://www.youtube.com/',
-                # Add sleep between requests
-                'sleep_interval': 1,
-                # Disable geo-bypass to avoid triggering bot detection
-                'geo_bypass': False,
-                # Use cookies if available
-                'cookiefile': os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt') if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')) else None,
-            }
+            # Build the yt-dlp command
+            cmd = [
+                'yt-dlp',
+                '--no-playlist',
+                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                '--referer', 'https://www.youtube.com/',
+                '--no-check-certificate',
+                '--geo-bypass-country', 'US'
+            ]
+            
+            # Add cookies file if it exists
+            cookies_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
+            if os.path.exists(cookies_file):
+                cmd.extend(['--cookies', cookies_file])
             
             # Add format if specified
             if format_id and format_id != 'best':
-                ydl_opts['format'] = format_id
+                cmd.extend(['-f', format_id])
             else:
-                # Default to best quality with video and audio
-                ydl_opts['format'] = 'best[height<=1080]'
+                cmd.extend(['-f', 'best[height<=1080]'])
             
-            # Try direct download with yt-dlp
+            # Add output template
+            cmd.extend(['-o', f"{output_path}.%(ext)s"])
+            
+            # Add URL
+            cmd.append(url)
+            
+            # Run the command
+            process = subprocess.run(cmd, capture_output=True, text=True)
+            
+            # Check if the command was successful
+            if process.returncode != 0:
+                print(f"yt-dlp error: {process.stderr}")
+                raise Exception(f"yt-dlp error: {process.stderr}")
+            
+            # Find the downloaded file
+            downloaded_file = None
+            for ext in ['mp4', 'webm', 'mkv']:
+                test_filename = f"{output_path}.{ext}"
+                if os.path.exists(test_filename):
+                    downloaded_file = test_filename
+                    break
+            
+            if not downloaded_file:
+                raise Exception("Downloaded file not found")
+            
+            # Get just the filename without the path
+            base_filename = os.path.basename(downloaded_file)
+            
+            # Return the download URL
+            download_url = url_for('serve_file', filename=base_filename, _external=True)
+            
+            return jsonify({
+                'success': True,
+                'download_url': download_url,
+                'filename': base_filename
+            })
+                
+        except Exception as e:
+            # Fallback to thumbnail download
             try:
-                # Download the video
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    # Get the filename that was actually used
-                    filename = ydl.prepare_filename(info)
-                    
-                # Check if file exists
-                if not os.path.exists(filename):
-                    # Try with extension
-                    for ext in ['mp4', 'webm', 'mkv']:
-                        test_filename = f"{output_path}.{ext}"
-                        if os.path.exists(test_filename):
-                            filename = test_filename
-                            break
-                    else:
-                        raise Exception("Downloaded file not found")
-                
-                # Get just the filename without the path
-                base_filename = os.path.basename(filename)
-                
-                # Return the download URL
-                download_url = url_for('serve_file', filename=base_filename, _external=True)
-                
-                return jsonify({
-                    'success': True,
-                    'download_url': download_url,
-                    'filename': base_filename
-                })
-            
-            except Exception as ydl_error:
-                print(f"yt-dlp download error: {ydl_error}")
-                
-                # Fallback: Try using YouTube's direct thumbnail system
-                # This is a simple fallback that at least gives the user something
                 video_id = extract_youtube_id(url)
                 if not video_id:
                     raise Exception("Could not extract YouTube video ID")
@@ -356,9 +362,9 @@ def download_video():
                     'is_fallback': True,
                     'fallback_message': "Could not download video due to YouTube's bot protection. Thumbnail downloaded instead."
                 })
-                
-        except Exception as e:
-            return jsonify({'success': False, 'error': f'Failed to download YouTube video: {str(e)}'})
+            
+            except Exception as fallback_error:
+                return jsonify({'success': False, 'error': f'Failed to download YouTube video: {str(e)}. Fallback also failed: {str(fallback_error)}'})
     
     elif platform in ['facebook', 'instagram', 'tiktok']:
         # For other platforms, return an error for now
