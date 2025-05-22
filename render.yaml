@@ -3,8 +3,10 @@ services:
     name: videograb
     env: python
     buildCommand: |
-      # Install dependencies with specific versions
+      # Install dependencies
       pip install -r requirements.txt
+      # Install yt-dlp
+      pip install yt-dlp
       # Create necessary directories
       mkdir -p tmp
     startCommand: gunicorn app:app
