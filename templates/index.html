@@ -443,6 +443,73 @@
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+
+    .loading-text {
+      margin-top: 1rem;
+      color: #666;
+    }
+
+    /* Video preview styles */
+    .video-preview {
+      margin-top: 1.5rem;
+      display: none;
+    }
+
+    .preview-container {
+      width: 100%;
+      position: relative;
+      padding-bottom: 56.25%; /* 16:9 aspect ratio */
+      height: 0;
+      overflow: hidden;
+      border-radius: 8px;
+    }
+
+    .preview-container iframe {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* API status indicator */
+    .api-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.75rem;
+      background-color: rgba(59, 130, 246, 0.1);
+      border-radius: 50px;
+      font-size: 0.8rem;
+      color: #3b82f6;
+      margin-top: 1rem;
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #10b981;
+    }
+
+    /* Download progress */
+    .download-progress {
+      width: 100%;
+      height: 4px;
+      background-color: #e5e7eb;
+      border-radius: 2px;
+      margin-top: 0.5rem;
+      overflow: hidden;
+      display: none;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background-color: #3b82f6;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
   </style>
 </head>
 <body>
@@ -499,6 +566,11 @@
         </button>
       </div>
 
+      <div class="api-status">
+        <span class="status-indicator"></span>
+        <span>Using RapidAPI</span>
+      </div>
+
       <!-- Loading Indicator -->
       <div id="loading" class="loading">
         <div class="loading-spinner"></div>
@@ -518,11 +590,22 @@
               <div id="videoMeta" class="video-meta"></div>
             </div>
           </div>
+
+          <!-- Video Preview -->
+          <div id="videoPreview" class="video-preview">
+            <div class="preview-container" id="previewContainer"></div>
+          </div>
+
           <div class="video-options">
             <h3 class="option-title">Download Options</h3>
             <div id="downloadOptions" class="download-options">
               <!-- Download options will be inserted here -->
             </div>
+          </div>
+
+          <!-- Download Progress -->
+          <div class="download-progress" id="downloadProgress">
+            <div class="progress-bar" id="progressBar"></div>
           </div>
         </div>
       </div>
@@ -544,6 +627,10 @@
       const videoTitleElement = document.getElementById('videoTitle');
       const videoMetaElement = document.getElementById('videoMeta');
       const downloadOptionsElement = document.getElementById('downloadOptions');
+      const videoPreviewElement = document.getElementById('videoPreview');
+      const previewContainerElement = document.getElementById('previewContainer');
+      const downloadProgressElement = document.getElementById('downloadProgress');
+      const progressBarElement = document.getElementById('progressBar');
 
       // Function to show error message
       function showError(message) {
@@ -566,52 +653,95 @@
         return `${sizeInMB.toFixed(1)} MB`;
       }
 
+      // Function to format duration
+      function formatDuration(seconds) {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+      }
+
+      // Function to show video preview
+      function showVideoPreview(videoId, platform) {
+        videoPreviewElement.style.display = 'block';
+        
+        if (platform === 'youtube') {
+          previewContainerElement.innerHTML = `
+            <iframe 
+              src="https://www.youtube.com/embed/${videoId}?autoplay=0" 
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+              allowfullscreen
+            ></iframe>
+          `;
+        } else if (platform === 'facebook') {
+          previewContainerElement.innerHTML = `
+            <iframe 
+              src="https://www.facebook.com/plugins/video.php?href=https://www.facebook.com/watch/?v=${videoId}" 
+              scrolling="no" 
+              allow="encrypted-media; picture-in-picture; web-share" 
+              allowfullscreen
+            ></iframe>
+          `;
+        } else {
+          // For other platforms or if no preview is available
+          videoPreviewElement.style.display = 'none';
+        }
+      }
+
       // Function to handle video download
-      function downloadVideo(url, itag, streamUrl) {
+      function downloadVideo(url, streamUrl) {
         loadingElement.style.display = 'block';
         hideError();
+        downloadProgressElement.style.display = 'block';
+        progressBarElement.style.width = '0%';
 
         const formData = new FormData();
         formData.append('url', url);
-        
-        if (itag) {
-          formData.append('itag', itag);
-        }
         
         if (streamUrl) {
           formData.append('stream_url', streamUrl);
         }
 
-        fetch('/api/download', {
-          method: 'POST',
-          body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
+        // Create a fetch request with progress tracking
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/download', true);
+        
+        xhr.upload.onprogress = function(e) {
+          if (e.lengthComputable) {
+            const percentComplete = (e.loaded / e.total) * 100;
+            progressBarElement.style.width = percentComplete + '%';
+          }
+        };
+        
+        xhr.onload = function() {
           loadingElement.style.display = 'none';
+          downloadProgressElement.style.display = 'none';
           
-          if (data.success) {
-            if (data.redirect && data.service_url) {
-              // For YouTube, open the download service in a new tab
-              window.open(data.service_url, '_blank');
-            } else if (data.download_url) {
-              // For other platforms, download directly
+          if (xhr.status === 200) {
+            const data = JSON.parse(xhr.responseText);
+            
+            if (data.success) {
+              // For all platforms, download directly
               const downloadLink = document.createElement('a');
               downloadLink.href = data.download_url + '?name=' + encodeURIComponent(data.filename);
               downloadLink.download = data.filename;
               document.body.appendChild(downloadLink);
               downloadLink.click();
               document.body.removeChild(downloadLink);
+            } else {
+              showError(data.error || 'Failed to download video');
             }
           } else {
-            showError(data.error || 'Failed to download video');
+            showError('Failed to download video: Server error');
           }
-        })
-        .catch(error => {
+        };
+        
+        xhr.onerror = function() {
           loadingElement.style.display = 'none';
+          downloadProgressElement.style.display = 'none';
           showError('An error occurred while downloading the video');
-          console.error('Download error:', error);
-        });
+        };
+        
+        xhr.send(formData);
       }
 
       // Function to handle search button click
@@ -626,6 +756,7 @@
         // Show loading indicator
         loadingElement.style.display = 'block';
         videoResultElement.style.display = 'none';
+        videoPreviewElement.style.display = 'none';
         hideError();
 
         // Create form data
@@ -667,25 +798,30 @@
             }
             if (videoInfo.length) {
               metaText += metaText ? ' | ' : '';
-              const minutes = Math.floor(videoInfo.length / 60);
-              const seconds = videoInfo.length % 60;
-              metaText += `Duration: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+              metaText += `Duration: ${formatDuration(videoInfo.length)}`;
             }
             videoMetaElement.textContent = metaText;
+            
+            // Show video preview if it's YouTube
+            if (data.platform === 'youtube' && videoInfo.id) {
+              showVideoPreview(videoInfo.id, data.platform);
+            } else {
+              videoPreviewElement.style.display = 'none';
+            }
             
             // Clear previous download options
             downloadOptionsElement.innerHTML = '';
             
             // Add download options based on platform
-            if (data.platform === 'youtube' && videoInfo.streams && videoInfo.streams.length > 0) {
+            if (videoInfo.streams && videoInfo.streams.length > 0) {
               videoInfo.streams.forEach(stream => {
                 const optionElement = document.createElement('div');
                 optionElement.className = 'download-option';
                 
                 optionElement.innerHTML = `
-                  <div class="option-quality">${stream.resolution || 'Standard'}</div>
+                  <div class="option-quality">${stream.resolution || stream.quality || 'Standard'}</div>
                   <div class="option-details">
-                    ${stream.mime_type || 'video/mp4'} | ${stream.fps ? stream.fps + 'fps | ' : ''}${stream.size_mb ? formatFileSize(stream.size_mb) : ''}
+                    ${stream.mime_type || 'video/mp4'} ${stream.fps ? ' | ' + stream.fps + 'fps' : ''} ${stream.size_mb ? ' | ' + formatFileSize(stream.size_mb) : ''}
                   </div>
                   <button class="download-btn">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
@@ -697,33 +833,7 @@
                 `;
                 
                 optionElement.querySelector('.download-btn').addEventListener('click', function() {
-                  downloadVideo(url, stream.itag);
-                });
-                
-                downloadOptionsElement.appendChild(optionElement);
-              });
-            } else if ((data.platform === 'facebook' || data.platform === 'instagram') && 
-                      videoInfo.streams && videoInfo.streams.length > 0) {
-              videoInfo.streams.forEach(stream => {
-                const optionElement = document.createElement('div');
-                optionElement.className = 'download-option';
-                
-                optionElement.innerHTML = `
-                  <div class="option-quality">${stream.quality || 'Standard'}</div>
-                  <div class="option-details">
-                    video/mp4
-                  </div>
-                  <button class="download-btn">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                      <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                      <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
-                    </svg>
-                    Download
-                  </button>
-                `;
-                
-                optionElement.querySelector('.download-btn').addEventListener('click', function() {
-                  downloadVideo(url, null, stream.url);
+                  downloadVideo(url, stream.url);
                 });
                 
                 downloadOptionsElement.appendChild(optionElement);
@@ -762,6 +872,13 @@
       videoUrlInput.addEventListener('keypress', function(event) {
         if (event.key === 'Enter') {
           handleSearch();
+        }
+      });
+
+      // Add example URL on double-click in the input field
+      videoUrlInput.addEventListener('dblclick', function() {
+        if (!videoUrlInput.value) {
+          videoUrlInput.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
         }
       });
     });
