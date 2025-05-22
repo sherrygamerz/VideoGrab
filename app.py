@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'videograb_downloads')
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# RapidAPI YouTube API Key
+RAPIDAPI_KEY = "16c6178069mshcf2c2d8c7f50fccp1037f4jsn9cb06df7637a"
+RAPIDAPI_HOST = "youtube138.p.rapidapi.com"
+
 # Browser-like headers to avoid detection
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -26,6 +30,12 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Referer': 'https://www.google.com/',
     'DNT': '1',  # Do Not Track
+}
+
+# RapidAPI headers
+RAPIDAPI_HEADERS = {
+    "X-RapidAPI-Key": RAPIDAPI_KEY,
+    "X-RapidAPI-Host": RAPIDAPI_HOST
 }
 
 # Clean up old files periodically (files older than 1 hour will be removed)
@@ -64,7 +74,7 @@ def extract_youtube_id(url):
         return url.split('youtube.com/shorts/')[1].split('?')[0]
     return None
 
-# YouTube video downloader using direct API approach
+# YouTube video downloader using RapidAPI
 def download_youtube(url):
     try:
         video_id = extract_youtube_id(url)
@@ -75,53 +85,102 @@ def download_youtube(url):
                 'error': 'Could not extract YouTube video ID'
             }
         
-        # Get video info using YouTube's oEmbed API
-        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-        oembed_response = requests.get(oembed_url, headers=HEADERS)
+        # Get video details from RapidAPI
+        api_url = f"https://youtube138.p.rapidapi.com/video/details/"
+        querystring = {"id": video_id}
         
-        if oembed_response.status_code != 200:
+        response = requests.get(api_url, headers=RAPIDAPI_HEADERS, params=querystring)
+        
+        if response.status_code != 200:
             return {
                 'success': False,
                 'platform': 'youtube',
-                'error': f"Failed to get video info: {oembed_response.status_code}"
+                'error': f"Failed to get video info: {response.status_code}"
             }
         
-        oembed_data = oembed_response.json()
-        title = oembed_data.get('title', 'YouTube Video')
-        author = oembed_data.get('author_name', 'Unknown')
-        thumbnail = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+        video_data = response.json()
         
-        # Get available streams using a more reliable approach
-        # For simplicity, we'll provide fixed quality options that are commonly available
-        streams = [
-            {
-                'itag': 'high',
-                'resolution': '720p',
-                'mime_type': 'video/mp4',
-                'fps': 30,
-                'size_mb': 15.0  # Estimated size
-            },
-            {
-                'itag': 'medium',
-                'resolution': '360p',
-                'mime_type': 'video/mp4',
-                'fps': 30,
-                'size_mb': 8.0  # Estimated size
-            },
-            {
-                'itag': 'low',
-                'resolution': '144p',
-                'mime_type': 'video/mp4',
-                'fps': 30,
-                'size_mb': 3.0  # Estimated size
+        # Get video streams from RapidAPI
+        streams_url = f"https://youtube138.p.rapidapi.com/video/streams/"
+        streams_response = requests.get(streams_url, headers=RAPIDAPI_HEADERS, params=querystring)
+        
+        if streams_response.status_code != 200:
+            return {
+                'success': False,
+                'platform': 'youtube',
+                'error': f"Failed to get video streams: {streams_response.status_code}"
             }
-        ]
+        
+        streams_data = streams_response.json()
+        
+        # Extract relevant information
+        title = video_data.get('title', 'YouTube Video')
+        author = video_data.get('author', {}).get('title', 'Unknown')
+        thumbnail = video_data.get('thumbnails', [{}])[-1].get('url') if video_data.get('thumbnails') else None
+        duration = video_data.get('lengthSeconds', 0)
+        
+        # Process streams
+        available_streams = []
+        
+        # Add adaptive formats (usually better quality)
+        if 'adaptiveFormats' in streams_data:
+            for stream in streams_data['adaptiveFormats']:
+                if stream.get('mimeType', '').startswith('video/'):
+                    quality = stream.get('qualityLabel', 'Unknown')
+                    itag = stream.get('itag', '')
+                    url = stream.get('url', '')
+                    mime_type = stream.get('mimeType', '').split(';')[0]
+                    fps = stream.get('fps', 30)
+                    
+                    # Calculate approximate size in MB (bitrate * duration / 8 / 1024 / 1024)
+                    bitrate = stream.get('bitrate', 0)
+                    size_mb = round((bitrate * int(duration)) / 8 / 1024 / 1024, 2)
+                    
+                    if url:  # Only add if URL is available
+                        available_streams.append({
+                            'itag': itag,
+                            'resolution': quality,
+                            'mime_type': mime_type,
+                            'fps': fps,
+                            'size_mb': size_mb,
+                            'url': url
+                        })
+        
+        # Add formats (combined audio and video)
+        if 'formats' in streams_data:
+            for stream in streams_data['formats']:
+                quality = stream.get('qualityLabel', 'Unknown')
+                itag = stream.get('itag', '')
+                url = stream.get('url', '')
+                mime_type = stream.get('mimeType', '').split(';')[0]
+                fps = stream.get('fps', 30)
+                
+                # Calculate approximate size in MB
+                bitrate = stream.get('bitrate', 0)
+                size_mb = round((bitrate * int(duration)) / 8 / 1024 / 1024, 2)
+                
+                if url:  # Only add if URL is available
+                    available_streams.append({
+                        'itag': itag,
+                        'resolution': quality,
+                        'mime_type': mime_type,
+                        'fps': fps,
+                        'size_mb': size_mb,
+                        'url': url
+                    })
+        
+        # Sort streams by resolution (highest first)
+        available_streams.sort(key=lambda x: x.get('size_mb', 0), reverse=True)
+        
+        # Limit to top 5 streams to avoid overwhelming the user
+        available_streams = available_streams[:5]
         
         video_info = {
             'title': title,
             'author': author,
             'thumbnail': thumbnail,
-            'streams': streams,
+            'length': int(duration),
+            'streams': available_streams,
             'id': video_id
         }
         
@@ -334,8 +393,7 @@ def get_video_info():
 @app.route('/api/download', methods=['POST'])
 def download_video():
     url = request.form.get('url')
-    itag = request.form.get('itag')  # For YouTube
-    stream_url = request.form.get('stream_url')  # For Facebook/Instagram
+    stream_url = request.form.get('stream_url')  # Direct stream URL
     
     if not url:
         return jsonify({
@@ -356,62 +414,31 @@ def download_video():
         filename = f"{platform}_{uuid.uuid4().hex}.mp4"
         file_path = os.path.join(TEMP_DIR, filename)
         
-        if platform == 'youtube':
-            video_id = extract_youtube_id(url)
-            if not video_id:
-                return jsonify({
-                    'success': False,
-                    'error': 'Could not extract YouTube video ID'
-                })
-            
-            # For YouTube, we'll use a different approach
-            # Instead of trying to download directly (which is increasingly difficult),
-            # we'll redirect to a reliable third-party service
-            
-            # Create a YouTube download service URL
-            if itag == 'high':
-                quality = '720'
-            elif itag == 'medium':
-                quality = '360'
-            else:
-                quality = '144'
-                
-            # Use y2mate or similar service (this is just an example)
-            download_service_url = f"https://www.y2mate.com/youtube/{video_id}"
-            
+        if not stream_url:
             return jsonify({
-                'success': True,
-                'redirect': True,
-                'service_url': download_service_url,
-                'message': 'Redirecting to download service...'
+                'success': False,
+                'error': 'No stream URL provided'
             })
-            
-        elif platform in ['facebook', 'instagram']:
-            if not stream_url:
-                return jsonify({
-                    'success': False,
-                    'error': f'No stream URL provided for {platform} video'
-                })
-            
-            # Download the video from the stream URL
-            response = requests.get(stream_url, stream=True, headers=HEADERS)
-            
-            if response.status_code != 200:
-                return jsonify({
-                    'success': False,
-                    'error': f'Failed to download {platform} video: {response.status_code}'
-                })
-            
-            with open(file_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024*1024):
-                    if chunk:
-                        f.write(chunk)
-            
+        
+        # Download the video from the stream URL
+        response = requests.get(stream_url, stream=True, headers=HEADERS)
+        
+        if response.status_code != 200:
             return jsonify({
-                'success': True,
-                'download_url': url_for('serve_file', filename=filename),
-                'filename': f"{platform}_video.mp4"
+                'success': False,
+                'error': f'Failed to download video: {response.status_code}'
             })
+        
+        with open(file_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=1024*1024):
+                if chunk:
+                    f.write(chunk)
+        
+        return jsonify({
+            'success': True,
+            'download_url': url_for('serve_file', filename=filename),
+            'filename': f"{platform}_video.mp4"
+        })
     
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
