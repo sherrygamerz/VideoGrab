@@ -572,47 +572,53 @@
       }
 
       // Function to handle video download
-      function downloadVideo(url, itag, streamUrl) {
-        loadingElement.style.display = 'block';
-        hideError();
+  function downloadVideo(url, itag, streamUrl) {
+    loadingElement.style.display = 'block';
+    hideError();
 
-        const formData = new FormData();
-        formData.append('url', url);
-        
-        if (itag) {
-          formData.append('itag', itag);
-        }
-        
-        if (streamUrl) {
-          formData.append('stream_url', streamUrl);
-        }
+    const formData = new FormData();
+    formData.append('url', url);
+    
+    if (itag) {
+      formData.append('itag', itag);
+    }
+    
+    if (streamUrl) {
+      formData.append('stream_url', streamUrl);
+    }
 
-        fetch('/api/download', {
-          method: 'POST',
-          body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-          loadingElement.style.display = 'none';
-          
-          if (data.success) {
-            // Create a temporary link and click it to start the download
-            const downloadLink = document.createElement('a');
-            downloadLink.href = data.download_url + '?name=' + encodeURIComponent(data.filename);
-            downloadLink.download = data.filename;
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            document.body.removeChild(downloadLink);
-          } else {
-            showError(data.error || 'Failed to download video');
-          }
-        })
-        .catch(error => {
-          loadingElement.style.display = 'none';
-          showError('An error occurred while downloading the video');
-          console.error('Download error:', error);
-        });
+    fetch('/api/download', {
+      method: 'POST',
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      loadingElement.style.display = 'none';
+      
+      if (data.success) {
+        if (data.redirect && data.service_url) {
+          // For YouTube, open the download service in a new tab
+          window.open(data.service_url, '_blank');
+        } else if (data.download_url) {
+          // For other platforms, download directly
+          const downloadLink = document.createElement('a');
+          downloadLink.href = data.download_url + '?name=' + encodeURIComponent(data.filename);
+          downloadLink.download = data.filename;
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          document.body.removeChild(downloadLink);
+        }
+      } else {
+        showError(data.error || 'Failed to download video');
       }
+    })
+    .catch(error => {
+      loadingElement.style.display = 'none';
+      showError('An error occurred while downloading the video');
+      console.error('Download error:', error);
+    });
+  }
+</script>
 
       // Function to handle search button click
       function handleSearch() {
