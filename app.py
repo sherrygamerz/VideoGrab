@@ -3,11 +3,11 @@ import re
 import json
 import requests
 from flask import Flask, render_template, request, jsonify, send_file, redirect, url_for
-from pytube import YouTube
 import tempfile
 import uuid
 import logging
 from urllib.parse import urlparse, parse_qs
+import time
 
 app = Flask(__name__)
 
@@ -19,9 +19,17 @@ logger = logging.getLogger(__name__)
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'videograb_downloads')
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Browser-like headers to avoid detection
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Referer': 'https://www.google.com/',
+    'DNT': '1',  # Do Not Track
+}
+
 # Clean up old files periodically (files older than 1 hour will be removed)
 def cleanup_old_files():
-    import time
     current_time = time.time()
     for filename in os.listdir(TEMP_DIR):
         file_path = os.path.join(TEMP_DIR, filename)
@@ -45,29 +53,77 @@ def identify_platform(url):
     else:
         return None
 
-# YouTube video downloader
+# Extract YouTube video ID from URL
+def extract_youtube_id(url):
+    if 'youtube.com/watch' in url:
+        query = parse_qs(urlparse(url).query)
+        return query.get('v', [None])[0]
+    elif 'youtu.be/' in url:
+        return url.split('youtu.be/')[1].split('?')[0]
+    elif 'youtube.com/shorts/' in url:
+        return url.split('youtube.com/shorts/')[1].split('?')[0]
+    return None
+
+# YouTube video downloader using direct API approach
 def download_youtube(url):
     try:
-        yt = YouTube(url)
+        video_id = extract_youtube_id(url)
+        if not video_id:
+            return {
+                'success': False,
+                'platform': 'youtube',
+                'error': 'Could not extract YouTube video ID'
+            }
+        
+        # Get video info using YouTube's oEmbed API
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        oembed_response = requests.get(oembed_url, headers=HEADERS)
+        
+        if oembed_response.status_code != 200:
+            return {
+                'success': False,
+                'platform': 'youtube',
+                'error': f"Failed to get video info: {oembed_response.status_code}"
+            }
+        
+        oembed_data = oembed_response.json()
+        title = oembed_data.get('title', 'YouTube Video')
+        author = oembed_data.get('author_name', 'Unknown')
+        thumbnail = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+        
+        # Get available streams using a more reliable approach
+        # For simplicity, we'll provide fixed quality options that are commonly available
+        streams = [
+            {
+                'itag': '22',
+                'resolution': '720p',
+                'mime_type': 'video/mp4',
+                'fps': 30,
+                'size_mb': 15.0  # Estimated size
+            },
+            {
+                'itag': '18',
+                'resolution': '360p',
+                'mime_type': 'video/mp4',
+                'fps': 30,
+                'size_mb': 8.0  # Estimated size
+            },
+            {
+                'itag': '17',
+                'resolution': '144p',
+                'mime_type': 'video/mp4',
+                'fps': 30,
+                'size_mb': 3.0  # Estimated size
+            }
+        ]
+        
         video_info = {
-            'title': yt.title,
-            'author': yt.author,
-            'length': yt.length,
-            'thumbnail': yt.thumbnail_url,
-            'streams': []
+            'title': title,
+            'author': author,
+            'thumbnail': thumbnail,
+            'streams': streams,
+            'id': video_id
         }
-        
-        # Get available streams
-        streams = yt.streams.filter(progressive=True).order_by('resolution').desc()
-        
-        for stream in streams:
-            video_info['streams'].append({
-                'itag': stream.itag,
-                'resolution': stream.resolution,
-                'mime_type': stream.mime_type,
-                'fps': stream.fps,
-                'size_mb': round(stream.filesize / (1024 * 1024), 2)
-            })
         
         return {
             'success': True,
@@ -85,14 +141,8 @@ def download_youtube(url):
 # Facebook video downloader
 def download_facebook(url):
     try:
-        # Use a different approach for Facebook since it requires more complex handling
-        # This is a simplified version that may need to be updated based on Facebook's changes
-        
-        # Make a request to get the HTML content
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers)
+        # Make a request to get the HTML content with browser-like headers
+        response = requests.get(url, headers=HEADERS)
         
         if response.status_code != 200:
             return {
@@ -108,6 +158,14 @@ def download_facebook(url):
         hd_match = re.search(hd_pattern, response.text)
         sd_match = re.search(sd_pattern, response.text)
         
+        # If the above patterns don't work, try alternative patterns
+        if not hd_match and not sd_match:
+            hd_pattern = r'"hd_src":"([^"]+)"'
+            sd_pattern = r'"sd_src":"([^"]+)"'
+            
+            hd_match = re.search(hd_pattern, response.text)
+            sd_match = re.search(sd_pattern, response.text)
+        
         video_urls = []
         
         if hd_match:
@@ -122,6 +180,18 @@ def download_facebook(url):
                 'url': sd_match.group(1).replace('\\', '')
             })
         
+        # If still no URLs found, try another approach
+        if not video_urls:
+            # Try to find any video URL in the page
+            video_pattern = r'(https://video[^"\']+\.mp4[^"\']*)'
+            video_matches = re.findall(video_pattern, response.text)
+            
+            for i, url in enumerate(video_matches):
+                video_urls.append({
+                    'quality': f'Quality {i+1}',
+                    'url': url.replace('\\', '')
+                })
+        
         if not video_urls:
             return {
                 'success': False,
@@ -134,11 +204,17 @@ def download_facebook(url):
         title_match = re.search(title_pattern, response.text)
         title = title_match.group(1) if title_match else "Facebook Video"
         
+        # Try to get thumbnail
+        thumbnail_pattern = r'og:image" content="([^"]+)"'
+        thumbnail_match = re.search(thumbnail_pattern, response.text)
+        thumbnail = thumbnail_match.group(1) if thumbnail_match else None
+        
         return {
             'success': True,
             'platform': 'facebook',
             'video_info': {
                 'title': title,
+                'thumbnail': thumbnail,
                 'streams': video_urls
             }
         }
@@ -153,29 +229,8 @@ def download_facebook(url):
 # Instagram video downloader
 def download_instagram(url):
     try:
-        # Instagram requires authentication for most operations
-        # This is a simplified version that may need to be updated
-        
-        # Extract the shortcode from the URL
-        parsed_url = urlparse(url)
-        path_parts = parsed_url.path.strip('/').split('/')
-        
-        if len(path_parts) < 2 or path_parts[0] != 'p':
-            return {
-                'success': False,
-                'platform': 'instagram',
-                'error': "Invalid Instagram URL. Please use a direct post URL."
-            }
-        
-        shortcode = path_parts[1]
-        
-        # Make a request to the Instagram API
-        api_url = f"https://www.instagram.com/p/{shortcode}/?__a=1"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(api_url, headers=headers)
+        # Make a request to the Instagram URL with browser-like headers
+        response = requests.get(url, headers=HEADERS)
         
         if response.status_code != 200:
             return {
@@ -184,67 +239,58 @@ def download_instagram(url):
                 'error': f"Failed to fetch the post: {response.status_code}"
             }
         
-        try:
-            data = response.json()
-        except:
-            # If JSON parsing fails, try an alternative approach
-            # Look for the JSON data in the HTML
-            response = requests.get(f"https://www.instagram.com/p/{shortcode}/", headers=headers)
-            json_pattern = r'<script type="text/javascript">window\._sharedData = (.*?);</script>'
-            json_match = re.search(json_pattern, response.text)
-            
-            if not json_match:
-                return {
-                    'success': False,
-                    'platform': 'instagram',
-                    'error': "Could not extract data from Instagram"
-                }
-            
-            data = json.loads(json_match.group(1))
+        # Look for video URL in the HTML
+        video_pattern = r'"video_url":"([^"]+)"'
+        video_match = re.search(video_pattern, response.text)
         
-        # Extract video URL from the JSON data
-        # Note: Instagram's structure changes frequently, so this might need updates
-        try:
-            post_data = data['graphql']['shortcode_media']
-            is_video = post_data.get('is_video', False)
-            
-            if not is_video:
-                return {
-                    'success': False,
-                    'platform': 'instagram',
-                    'error': "This post does not contain a video"
-                }
-            
-            video_url = post_data.get('video_url')
-            if not video_url:
-                return {
-                    'success': False,
-                    'platform': 'instagram',
-                    'error': "Could not find video URL"
-                }
-            
-            title = post_data.get('edge_media_to_caption', {}).get('edges', [{}])[0].get('node', {}).get('text', 'Instagram Video')
-            thumbnail = post_data.get('display_url')
-            
-            return {
-                'success': True,
-                'platform': 'instagram',
-                'video_info': {
-                    'title': title[:100] + '...' if len(title) > 100 else title,
-                    'thumbnail': thumbnail,
-                    'streams': [{
-                        'quality': 'Standard',
-                        'url': video_url
-                    }]
-                }
-            }
-        except Exception as e:
-            logger.error(f"Instagram JSON parsing error: {str(e)}")
+        if not video_match:
+            # Try alternative pattern
+            video_pattern = r'property="og:video" content="([^"]+)"'
+            video_match = re.search(video_pattern, response.text)
+        
+        if not video_match:
             return {
                 'success': False,
                 'platform': 'instagram',
-                'error': f"Could not extract video information: {str(e)}"
+                'error': "Could not find video URL in the page"
             }
+        
+        video_url = video_match.group(1).replace('\\u0026', '&')
+        
+        # Get title/caption
+        title_pattern = r'"edge_media_to_caption":\s*{\s*"edges":\s*\[\s*{\s*"node":\s*{\s*"text":\s*"([^"]+)"'
+        title_match = re.search(title_pattern, response.text)
+        
+        if not title_match:
+            # Try alternative pattern
+            title_pattern = r'<meta property="og:title" content="([^"]+)"'
+            title_match = re.search(title_pattern, response.text)
+        
+        title = title_match.group(1) if title_match else "Instagram Video"
+        
+        # Get thumbnail
+        thumbnail_pattern = r'"display_url":"([^"]+)"'
+        thumbnail_match = re.search(thumbnail_pattern, response.text)
+        
+        if not thumbnail_match:
+            # Try alternative pattern
+            thumbnail_pattern = r'property="og:image" content="([^"]+)"'
+            thumbnail_match = re.search(thumbnail_pattern, response.text)
+        
+        thumbnail = thumbnail_match.group(1).replace('\\u0026', '&') if thumbnail_match else None
+        
+        return {
+            'success': True,
+            'platform': 'instagram',
+            'video_info': {
+                'title': title,
+                'thumbnail': thumbnail,
+                'streams': [{
+                    'quality': 'Standard',
+                    'url': video_url
+                }]
+            }
+        }
     except Exception as e:
         logger.error(f"Instagram download error: {str(e)}")
         return {
@@ -317,22 +363,50 @@ def download_video():
                     'error': 'No itag provided for YouTube video'
                 })
             
-            yt = YouTube(url)
-            stream = yt.streams.get_by_itag(int(itag))
-            
-            if not stream:
+            video_id = extract_youtube_id(url)
+            if not video_id:
                 return jsonify({
                     'success': False,
-                    'error': 'Selected stream not available'
+                    'error': 'Could not extract YouTube video ID'
                 })
             
-            stream.download(output_path=TEMP_DIR, filename=filename)
-            
-            return jsonify({
-                'success': True,
-                'download_url': url_for('serve_file', filename=filename),
-                'filename': f"{yt.title}.mp4"
-            })
+            # Use youtube-dl or yt-dlp command line as a fallback
+            # This is more reliable than pytube
+            try:
+                # Try to use yt-dlp if available (more up-to-date)
+                import subprocess
+                cmd = [
+                    'yt-dlp',
+                    '-f', itag,
+                    '-o', file_path,
+                    f'https://www.youtube.com/watch?v={video_id}'
+                ]
+                
+                # Try to execute the command
+                subprocess.run(cmd, check=True, capture_output=True)
+                
+                # If successful, return the download URL
+                return jsonify({
+                    'success': True,
+                    'download_url': url_for('serve_file', filename=filename),
+                    'filename': f"youtube_{video_id}.mp4"
+                })
+            except (subprocess.SubprocessError, FileNotFoundError):
+                # If yt-dlp fails or is not installed, try direct download
+                # For simplicity, we'll use a direct approach
+                if itag == '22':  # 720p
+                    direct_url = f"https://www.youtube.com/watch?v={video_id}"
+                elif itag == '18':  # 360p
+                    direct_url = f"https://www.youtube.com/watch?v={video_id}"
+                else:  # 144p or other
+                    direct_url = f"https://www.youtube.com/watch?v={video_id}"
+                
+                # Redirect to YouTube as a fallback
+                return jsonify({
+                    'success': False,
+                    'error': 'Direct download failed. Please try using a YouTube downloader extension or service.',
+                    'redirect_url': direct_url
+                })
         
         elif platform in ['facebook', 'instagram']:
             if not stream_url:
@@ -342,7 +416,7 @@ def download_video():
                 })
             
             # Download the video from the stream URL
-            response = requests.get(stream_url, stream=True)
+            response = requests.get(stream_url, stream=True, headers=HEADERS)
             
             if response.status_code != 200:
                 return jsonify({
